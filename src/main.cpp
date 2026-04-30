@@ -5,12 +5,27 @@
 #include <stdio.h>
 #include <algorithm>
 
+// ── Fast approximate rsqrt (for WASM where sqrtf is slow) ────────────────────
+// Uses the classic Quake III fast inverse square root with one Newton iteration
+static inline float fast_rsqrt(float x) {
+    float x2 = x * 0.5f;
+    float y = x;
+    unsigned int i;
+    memcpy(&i, &y, sizeof(i));
+    i = 0x5f3759df - (i >> 1);  // magic number
+    memcpy(&y, &i, sizeof(y));
+    y = y * (1.5f - (x2 * y * y));  // one Newton iteration
+    return y;
+}
+
 // ── Constants ────────────────────────────────────────────────────────────────
 // Use #define for compile-time constants that affect array sizes
 #define SCREEN_WIDTH  960
 #define SCREEN_HEIGHT 540
-#define SPHERE_COUNT  2000
+#define SPHERE_COUNT  1500
 #define SPHERE_RADIUS 6.0f
+#define MIN_DIST      (SPHERE_RADIUS * 2.0f)
+#define MIN_DIST_SQ   (MIN_DIST * MIN_DIST)
 
 const int ScreenWidth  = SCREEN_WIDTH;
 const int ScreenHeight = SCREEN_HEIGHT;
@@ -364,38 +379,36 @@ static void UpdatePhysics(float dt)
 // ── ResolveCollision ─────────────────────────────────────────────────────────
 static void ResolveCollision(int i, int j)
 {
-    Vector2 delta = {
-        balls[j].Position.x - balls[i].Position.x,
-        balls[j].Position.y - balls[i].Position.y
-    };
-    float distSq = delta.x * delta.x + delta.y * delta.y;
-    float minDist = SphereRadius * 2;
-    float minDistSq = minDist * minDist;
+    float dx = balls[j].Position.x - balls[i].Position.x;
+    float dy = balls[j].Position.y - balls[i].Position.y;
+    float distSq = dx * dx + dy * dy;
 
-    if (distSq < minDistSq && distSq > 0.0001f)
+    if (distSq < MIN_DIST_SQ && distSq > 0.0001f)
     {
-        float dist = sqrtf(distSq);
-        float invDist = 1.0f / dist;
-        Vector2 normal = { delta.x * invDist, delta.y * invDist };
-        float overlap = minDist - dist;
+        // Use fast rsqrt: invDist = 1/sqrt(distSq), then dist = distSq * invDist
+        float invDist = fast_rsqrt(distSq);
+        float dist = distSq * invDist;
+        float nx = dx * invDist;
+        float ny = dy * invDist;
+        float overlap = MIN_DIST - dist;
 
         // Separate
         float halfOverlap = overlap * 0.5f;
-        balls[i].Position.x -= normal.x * halfOverlap;
-        balls[i].Position.y -= normal.y * halfOverlap;
-        balls[j].Position.x += normal.x * halfOverlap;
-        balls[j].Position.y += normal.y * halfOverlap;
+        balls[i].Position.x -= nx * halfOverlap;
+        balls[i].Position.y -= ny * halfOverlap;
+        balls[j].Position.x += nx * halfOverlap;
+        balls[j].Position.y += ny * halfOverlap;
 
         // Elastic collision
         float relVelX = balls[j].Velocity.x - balls[i].Velocity.x;
         float relVelY = balls[j].Velocity.y - balls[i].Velocity.y;
-        float velAlongNormal = relVelX * normal.x + relVelY * normal.y;
+        float velAlongNormal = relVelX * nx + relVelY * ny;
 
         if (velAlongNormal < 0)
         {
             float impulse = -(1.0f + Restitution) * velAlongNormal * 0.5f;
-            float impX = normal.x * impulse;
-            float impY = normal.y * impulse;
+            float impX = nx * impulse;
+            float impY = ny * impulse;
 
             balls[i].Velocity.x -= impX;
             balls[i].Velocity.y -= impY;
@@ -403,8 +416,8 @@ static void ResolveCollision(int i, int j)
             balls[j].Velocity.y += impY;
 
             // Friction
-            float tangentX = -normal.y;
-            float tangentY =  normal.x;
+            float tangentX = -ny;
+            float tangentY =  nx;
             float velAlongTangent = relVelX * tangentX + relVelY * tangentY;
             float fricX = tangentX * (velAlongTangent * Friction * 0.5f);
             float fricY = tangentY * (velAlongTangent * Friction * 0.5f);

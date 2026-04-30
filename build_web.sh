@@ -5,7 +5,10 @@ emcc src/*.cpp -o web-build/index.html \
   libraylib.web.a \
   -DPLATFORM_WEB \
   -DEMSCRIPTEN_BUILD \
-  -O2 \
+  -O3 \
+  -msimd128 \
+  -ffast-math \
+  -flto \
   -s USE_GLFW=3 \
   -s ASYNCIFY \
   -s TOTAL_MEMORY=16777216 \
@@ -14,7 +17,8 @@ emcc src/*.cpp -o web-build/index.html \
   -s EXPORTED_RUNTIME_METHODS="['ccall', 'cwrap']" \
   -s ALLOW_MEMORY_GROWTH=1 \
   -s STACK_SIZE=2097152 \
-  --preload-file data@/data \
+  -s AGGRESSIVE_VARIABLE_ELIMINATION=1 \
+  -s WASM=1 \
   --shell-file custom_shell.html
 
 # Check if the emcc build was successful
