@@ -5,6 +5,7 @@ emcc src/*.cpp -o web-build/index.html \
   libraylib.web.a \
   -DPLATFORM_WEB \
   -DEMSCRIPTEN_BUILD \
+  -O2 \
   -s USE_GLFW=3 \
   -s ASYNCIFY \
   -s TOTAL_MEMORY=16777216 \
