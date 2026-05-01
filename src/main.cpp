@@ -131,7 +131,7 @@ static void ResolveCollision(int i, int j);
 
 void InitCamera()
 {
-    camera.target = Vector2{ ScreenWidth * 0.5f, ScreenHeight * 0.5f };
+    camera.target = Vector2{ (float)SCREEN_WIDTH * 0.5f, (float)SCREEN_HEIGHT * 0.5f };
     camera.offset = Vector2{ ScreenWidth * 0.5f, ScreenHeight * 0.5f };
     camera.rotation = 0.0f;
     camera.zoom = 0.7f;
