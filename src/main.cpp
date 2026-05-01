@@ -415,6 +415,13 @@ static void UpdatePhysics(float dt)
         }
     }
 
+    // Also update maxY for sleeping balls (they were skipped in the integration loop)
+    for (int i = 0; i < SphereCount; i++)
+    {
+        if (balls[i].IsAlive && balls[i].IsSleeping && balls[i].Position.y > maxY)
+            maxY = balls[i].Position.y;
+    }
+
     // ── Phase 2: Build spatial grid (once per frame) ───────────────────────
     memset(gridHeads, -1, sizeof(gridHeads));
     int cellCounts[GRID_COLS * GRID_ROWS];
