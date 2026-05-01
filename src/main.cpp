@@ -81,10 +81,14 @@ static double renderTime  = 0;
 static double frameTime   = 0;
 static int sleepingCount = 0;
 
-// ── Auto-restart timer ───────────────────────────────────────────────────────
+// ── Auto-restart timers ──────────────────────────────────────────────────────
 const bool AutoRestart = false;
 const float RestartInterval = 10.0f;
 static float restartTimer = 0;
+
+// ── Sleep-based restart ──────────────────────────────────────────────────────
+const float RestartIntervalSleep = 2.0f;
+static float restartSleepTimer = 0.0f;
 
 // ── RNG (simple xorshift32 seeded with 42) ───────────────────────────────────
 static unsigned int rngState = 42;
@@ -118,6 +122,7 @@ static void ResolveCollision(int i, int j);
 void Restart()
 {
     restartTimer = 0;
+    restartSleepTimer = 0.0f;
     InitBalls();
 }
 
@@ -150,16 +155,26 @@ int main(void)
             Restart();
         }
 
-        // Restart when all balls are asleep
-        if(sleepingCount == SPHERE_COUNT)
-        {
-            Restart();
-        }
-        
         // Physics
         double physStart = GetTime();
         UpdatePhysics(dt);
         physicsTime = (GetTime() - physStart) * 1000.0;
+
+        // Sleep-based restart: when all balls are asleep, start a timer.
+        // If any ball wakes up, reset the timer. After RestartIntervalSleep
+        // seconds of all balls being asleep, restart.
+        if (sleepingCount == SPHERE_COUNT)
+        {
+            restartSleepTimer += dt;
+            if (restartSleepTimer >= RestartIntervalSleep)
+            {
+                Restart();
+            }
+        }
+        else
+        {
+            restartSleepTimer = 0.0f;
+        }
 
         // Render
         BeginDrawing();
