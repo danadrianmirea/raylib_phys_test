@@ -80,6 +80,7 @@ static double physicsTime = 0;
 static double renderTime  = 0;
 static double frameTime   = 0;
 static int sleepingCount = 0;
+static float maxY = -1e9f; // highest Y position of any ball (used by renderer for early-out)
 
 // ── Auto-restart timers ──────────────────────────────────────────────────────
 const bool AutoRestart = false;
@@ -307,18 +308,48 @@ static void InitBalls(void)
 // ── DrawSpheres ──────────────────────────────────────────────────────────────
 static void DrawSpheres(void)
 {
-    for (int i = 0; i < SphereCount; i++)
+    // Use the spatial grid to only iterate balls in cells that overlap the
+    // screen. This avoids iterating balls that are far off-screen.
+    // If no ball is on screen (all above y=0), skip entirely.
+    if (maxY < 0) return;
+
+    int minCol = std::max(0, (int)(0 / CELL_SIZE));
+    int maxCol = std::min(GRID_COLS - 1, (int)(ScreenWidth / CELL_SIZE));
+    int minRow = std::max(0, (int)(0 / CELL_SIZE));
+    int maxRow = std::min(GRID_ROWS - 1, (int)(ScreenHeight / CELL_SIZE));
+
+    // Pre-compute texture source rect (full texture)
+    Rectangle srcRect = { 0, 0, (float)circleTexture.width, (float)circleTexture.height };
+    float texHalfW = circleTexture.width * 0.5f;
+    float texHalfH = circleTexture.height * 0.5f;
+
+    for (int row = minRow; row <= maxRow; row++)
     {
-        if (!balls[i].IsAlive) continue;
+        for (int col = minCol; col <= maxCol; col++)
+        {
+            int cell = row * GRID_COLS + col;
+            for (int i = gridHeads[cell]; i != -1; i = gridNext[i])
+            {
+                if (!balls[i].IsAlive) continue;
 
-        Vector2 pos = balls[i].Position;
+                Vector2 pos = balls[i].Position;
 
-        // Skip spheres that are entirely outside the screen
-        if (pos.x + SphereRadius < 0 || pos.x - SphereRadius > ScreenWidth ||
-            pos.y + SphereRadius < 0 || pos.y - SphereRadius > ScreenHeight)
-            continue;
+                // Skip spheres entirely outside the screen
+                if (pos.x + SphereRadius < 0 || pos.x - SphereRadius > ScreenWidth ||
+                    pos.y + SphereRadius < 0 || pos.y - SphereRadius > ScreenHeight)
+                    continue;
 
-        DrawCircleV(pos, SphereRadius, balls[i].Color);
+                // Use DrawTexturePro with the pre-rendered circle texture.
+                // This is more efficient than DrawCircleV because raylib can
+                // batch textured quads more effectively (fewer draw calls).
+                Rectangle destRect = {
+                    pos.x - texHalfW, pos.y - texHalfH,
+                    (float)circleTexture.width, (float)circleTexture.height
+                };
+                DrawTexturePro(circleTexture, srcRect, destRect,
+                               Vector2{ 0, 0 }, 0.0f, balls[i].Color);
+            }
+        }
     }
 }
 
@@ -361,7 +392,7 @@ static void UpdatePhysics(float dt)
     // Run multiple substeps for stability.
     // Grid rebuild and collision detection happen once after all substeps.
     // Track the highest Y position to know if any ball is on screen.
-    float maxY = -1e9f;
+    maxY = -1e9f;
     for (int step = 0; step < substeps; step++)
     {
         for (int i = 0; i < SphereCount; i++)
