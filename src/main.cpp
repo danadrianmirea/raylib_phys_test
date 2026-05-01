@@ -75,6 +75,15 @@ static int crowdedCount = 0;                     // number of crowded cells
 static Texture2D circleTexture;
 static Texture2D highlightTexture;
 
+// ── Camera ───────────────────────────────────────────────────────────────────
+static Camera2D camera = { 0 };
+
+// ── Pan limits (world-space) ─────────────────────────────────────────────────
+static float panLimitLeft   = -ScreenWidth * 2.0f;
+static float panLimitRight  =  ScreenWidth * 2.0f;
+static float panLimitTop    = -ScreenHeight;
+static float panLimitBottom =  ScreenHeight;
+
 // ── Performance tracking ─────────────────────────────────────────────────────
 static double physicsTime = 0;
 static double renderTime  = 0;
@@ -136,8 +145,19 @@ int main(void)
     // Initialize grid heads to -1
     memset(gridHeads, -1, sizeof(gridHeads));
 
+    // Initialize camera centered on the spawn area
+    camera.target = Vector2{ ScreenWidth * 0.5f, ScreenHeight * 0.5f };
+    camera.offset = Vector2{ ScreenWidth * 0.5f, ScreenHeight * 0.5f };
+    camera.rotation = 0.0f;
+    camera.zoom = 0.7f;
+
     InitTextures();
     InitBalls();
+
+    // Mouse drag state
+    bool isDragging = false;
+    Vector2 dragStart = { 0, 0 };
+    Vector2 camTargetAtDragStart = { 0, 0 };
 
     while (!WindowShouldClose())
     {
@@ -148,6 +168,64 @@ int main(void)
         {
             Restart();
         }
+
+        // ── Camera controls ────────────────────────────────────────────────
+        // WASD / Arrow keys panning
+        float panSpeed = 300.0f / camera.zoom;
+        if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP))
+            camera.target.y -= panSpeed * dt;
+        if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN))
+            camera.target.y += panSpeed * dt;
+        if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT))
+            camera.target.x -= panSpeed * dt;
+        if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT))
+            camera.target.x += panSpeed * dt;
+
+        // Mouse wheel zoom
+        float wheel = GetMouseWheelMove();
+        if (wheel != 0)
+        {
+            // Zoom towards mouse cursor
+            Vector2 mousePos = GetMousePosition();
+            Vector2 worldPos = GetScreenToWorld2D(mousePos, camera);
+
+            camera.zoom *= (1.0f + wheel * 0.1f);
+            if (camera.zoom < 0.1f) camera.zoom = 0.1f;
+            if (camera.zoom > 10.0f) camera.zoom = 10.0f;
+
+            // Adjust target so the world point under the mouse stays fixed
+            Vector2 newWorldPos = GetScreenToWorld2D(mousePos, camera);
+            camera.target.x += worldPos.x - newWorldPos.x;
+            camera.target.y += worldPos.y - newWorldPos.y;
+        }
+
+        // Mouse drag panning
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+        {
+            isDragging = true;
+            dragStart = GetMousePosition();
+            camTargetAtDragStart = camera.target;
+        }
+        if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
+        {
+            isDragging = false;
+        }
+        if (isDragging && IsMouseButtonDown(MOUSE_BUTTON_LEFT))
+        {
+            Vector2 mousePos = GetMousePosition();
+            Vector2 delta = {
+                (dragStart.x - mousePos.x) / camera.zoom,
+                (dragStart.y - mousePos.y) / camera.zoom
+            };
+            camera.target.x = camTargetAtDragStart.x + delta.x;
+            camera.target.y = camTargetAtDragStart.y + delta.y;
+        }
+
+        // Clamp camera target to pan limits
+        if (camera.target.x < panLimitLeft)  camera.target.x = panLimitLeft;
+        if (camera.target.x > panLimitRight) camera.target.x = panLimitRight;
+        if (camera.target.y < panLimitTop)    camera.target.y = panLimitTop;
+        if (camera.target.y > panLimitBottom) camera.target.y = panLimitBottom;
 
         // If AutoRestart is true, Auto-restart every RestartInterval seconds
         restartTimer += dt;
@@ -181,13 +259,19 @@ int main(void)
         BeginDrawing();
         ClearBackground(Color{ 15, 15, 25, 255 });
 
-        DrawRectangle(0, (int)GroundY, ScreenWidth, 4, SKYBLUE);
+        // World-space rendering (affected by camera)
+        BeginMode2D(camera);
+
+        constexpr int groundScale = 100;
+        DrawRectangle(-ScreenWidth*groundScale/2, (int)GroundY, ScreenWidth*groundScale, 5000, SKYBLUE);
 
         double renderStart = GetTime();
         DrawSpheres();
         renderTime = (GetTime() - renderStart) * 1000.0;
 
-        // UI
+        EndMode2D();
+
+        // UI (screen-space, not affected by camera)
         int ls = 25;
         int sy = 10;
         DrawFPS(10, sy);
@@ -204,16 +288,13 @@ int main(void)
                 Restitution, Friction, numColumns, sleepingCount);
         DrawText(buf, 10, sy + 3 * ls, 20, LIGHTGRAY);
 
-        float timeLeft = RestartInterval - restartTimer;
-        if(AutoRestart)
-        {
-            sprintf(buf, "Press R to reset  (auto: %.1fs)", timeLeft);
-        }
-        else
-        {
-            sprintf(buf, "Press R to reset");
-        }
-        DrawText(buf, 10, sy + 4 * ls, 20, LIGHTGRAY);
+        // Controls help (right side)
+        int cx = ScreenWidth - 10;
+        DrawText("Controls:", cx - MeasureText("Controls:", 20), sy, 20, LIGHTGRAY);
+        DrawText("WASD / Arrows - Pan", cx - MeasureText("WASD / Arrows - Pan", 18), sy + ls, 18, LIGHTGRAY);
+        DrawText("Mouse Drag - Pan", cx - MeasureText("Mouse Drag - Pan", 18), sy + 2 * ls, 18, LIGHTGRAY);
+        DrawText("Mouse Wheel - Zoom", cx - MeasureText("Mouse Wheel - Zoom", 18), sy + 3 * ls, 18, LIGHTGRAY);
+        DrawText("R - Reset", cx - MeasureText("R - Reset", 18), sy + 4 * ls, 18, LIGHTGRAY);
 
         EndDrawing();
         frameTime = (GetTime() - physStart) * 1000.0;
@@ -246,6 +327,7 @@ static void InitTextures(void)
         }
     }
     circleTexture = LoadTextureFromImage(circleImg);
+    SetTextureFilter(circleTexture, TEXTURE_FILTER_BILINEAR);
     UnloadImage(circleImg);
 
     Image highlightImg = GenImageColor(texSize, texSize, Color{ 0, 0, 0, 0 });
@@ -263,6 +345,7 @@ static void InitTextures(void)
         }
     }
     highlightTexture = LoadTextureFromImage(highlightImg);
+    SetTextureFilter(highlightTexture, TEXTURE_FILTER_BILINEAR);
     UnloadImage(highlightImg);
 }
 
@@ -309,14 +392,18 @@ static void InitBalls(void)
 static void DrawSpheres(void)
 {
     // Use the spatial grid to only iterate balls in cells that overlap the
-    // screen. This avoids iterating balls that are far off-screen.
+    // visible world area (accounting for camera pan/zoom).
     // If no ball is on screen (all above y=0), skip entirely.
     if (maxY < 0) return;
 
-    int minCol = std::max(0, (int)(0 / CELL_SIZE));
-    int maxCol = std::min(GRID_COLS - 1, (int)(ScreenWidth / CELL_SIZE));
-    int minRow = std::max(0, (int)(0 / CELL_SIZE));
-    int maxRow = std::min(GRID_ROWS - 1, (int)(ScreenHeight / CELL_SIZE));
+    // Compute visible world-space rectangle from camera
+    Vector2 topLeft = GetScreenToWorld2D(Vector2{ 0, 0 }, camera);
+    Vector2 bottomRight = GetScreenToWorld2D(Vector2{ (float)ScreenWidth, (float)ScreenHeight }, camera);
+
+    int minCol = std::max(0, (int)(topLeft.x / CELL_SIZE));
+    int maxCol = std::min(GRID_COLS - 1, (int)(bottomRight.x / CELL_SIZE));
+    int minRow = std::max(0, (int)(topLeft.y / CELL_SIZE));
+    int maxRow = std::min(GRID_ROWS - 1, (int)(bottomRight.y / CELL_SIZE));
 
     // Pre-compute texture source rect (full texture)
     Rectangle srcRect = { 0, 0, (float)circleTexture.width, (float)circleTexture.height };
@@ -334,9 +421,9 @@ static void DrawSpheres(void)
 
                 Vector2 pos = balls[i].Position;
 
-                // Skip spheres entirely outside the screen
-                if (pos.x + SphereRadius < 0 || pos.x - SphereRadius > ScreenWidth ||
-                    pos.y + SphereRadius < 0 || pos.y - SphereRadius > ScreenHeight)
+                // Skip spheres entirely outside the visible world area
+                if (pos.x + SphereRadius < topLeft.x || pos.x - SphereRadius > bottomRight.x ||
+                    pos.y + SphereRadius < topLeft.y || pos.y - SphereRadius > bottomRight.y)
                     continue;
 
                 // Use DrawTexturePro with the pre-rendered circle texture.
