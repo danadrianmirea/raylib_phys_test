@@ -142,7 +142,7 @@ void Restart()
     restartTimer = 0;
     restartSleepTimer = 0.0f;
     InitBalls();
-    InitCamera();
+    //InitCamera();
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -173,6 +173,10 @@ int main(void)
         if (IsKeyPressed(KEY_R))
         {
             Restart();
+        }
+        if (IsKeyPressed(KEY_C))
+        {
+            InitCamera();
         }
 
         // Handle window resize: just update the viewport size and camera offset
@@ -313,7 +317,8 @@ int main(void)
         DrawText("WASD / Arrows - Pan", cx - MeasureText("WASD / Arrows - Pan", 18), sy + ls, 18, LIGHTGRAY);
         DrawText("Mouse Drag - Pan", cx - MeasureText("Mouse Drag - Pan", 18), sy + 2 * ls, 18, LIGHTGRAY);
         DrawText("Mouse Wheel - Zoom", cx - MeasureText("Mouse Wheel - Zoom", 18), sy + 3 * ls, 18, LIGHTGRAY);
-        DrawText("R - Reset", cx - MeasureText("R - Reset", 18), sy + 4 * ls, 18, LIGHTGRAY);
+        DrawText("R - Reset demo", cx - MeasureText("R - Reset demo", 18), sy + 4 * ls, 18, LIGHTGRAY);
+        DrawText("C - Reset camera", cx - MeasureText("C - Reset camera", 18), sy + 5 * ls, 18, LIGHTGRAY);
 
         EndDrawing();
         frameTime = (GetTime() - physStart) * 1000.0;
