@@ -393,17 +393,32 @@ static void DrawSpheres(void)
 {
     // Use the spatial grid to only iterate balls in cells that overlap the
     // visible world area (accounting for camera pan/zoom).
-    // If no ball is on screen (all above y=0), skip entirely.
-    if (maxY < 0) return;
-
     // Compute visible world-space rectangle from camera
     Vector2 topLeft = GetScreenToWorld2D(Vector2{ 0, 0 }, camera);
     Vector2 bottomRight = GetScreenToWorld2D(Vector2{ (float)ScreenWidth, (float)ScreenHeight }, camera);
 
-    int minCol = std::max(0, (int)(topLeft.x / CELL_SIZE));
-    int maxCol = std::min(GRID_COLS - 1, (int)(bottomRight.x / CELL_SIZE));
-    int minRow = std::max(0, (int)(topLeft.y / CELL_SIZE));
-    int maxRow = std::min(GRID_ROWS - 1, (int)(bottomRight.y / CELL_SIZE));
+    int minCol = (int)(topLeft.x / CELL_SIZE);
+    int maxCol = (int)(bottomRight.x / CELL_SIZE);
+    int minRow = (int)(topLeft.y / CELL_SIZE);
+    int maxRow = (int)(bottomRight.y / CELL_SIZE);
+
+    // Debug: print when near the boundary where things might disappear
+    static int debugFrame = 0;
+    debugFrame++;
+    if (debugFrame % 60 == 0)
+    {
+        printf("cam=(%.1f,%.1f) zoom=%.2f topLeft=(%.1f,%.1f) botRight=(%.1f,%.1f) "
+               "rows=[%d..%d] cols=[%d..%d] maxY=%.1f\n",
+               camera.target.x, camera.target.y, camera.zoom,
+               topLeft.x, topLeft.y, bottomRight.x, bottomRight.y,
+               minRow, maxRow, minCol, maxCol, maxY);
+    }
+    
+    // Clamp to grid bounds
+    if (minCol < 0) minCol = 0;
+    if (maxCol >= GRID_COLS) maxCol = GRID_COLS - 1;
+    if (minRow < 0) minRow = 0;
+    if (maxRow >= GRID_ROWS) maxRow = GRID_ROWS - 1;
 
     // Pre-compute texture source rect (full texture)
     Rectangle srcRect = { 0, 0, (float)circleTexture.width, (float)circleTexture.height };
@@ -420,11 +435,6 @@ static void DrawSpheres(void)
                 //if (!balls[i].IsAlive) continue;
 
                 Vector2 pos = balls[i].Position;
-
-                // Skip spheres entirely outside the visible world area
-                if (pos.x + SphereRadius < topLeft.x || pos.x - SphereRadius > bottomRight.x ||
-                    pos.y + SphereRadius < topLeft.y || pos.y - SphereRadius > bottomRight.y)
-                    continue;
 
                 // Use DrawTexturePro with the pre-rendered circle texture.
                 // This is more efficient than DrawCircleV because raylib can
