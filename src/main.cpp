@@ -22,7 +22,7 @@ static inline float fast_rsqrt(float x) {
 // Use #define for compile-time constants that affect array sizes
 #define SCREEN_WIDTH  960
 #define SCREEN_HEIGHT 540
-#define SPHERE_COUNT  1500
+#define SPHERE_COUNT  10000
 #define SPHERE_RADIUS 6.0f
 #define MIN_DIST      (SPHERE_RADIUS * 2.0f)
 #define MIN_DIST_SQ   (MIN_DIST * MIN_DIST)
@@ -46,12 +46,20 @@ static float Friction = 0.0f;
 #define GRID_ROWS 25
 #define CELL_SIZE 24.0f
 
+// ── Sleep thresholds ─────────────────────────────────────────────────────────
+#define SLEEP_VELOCITY_THRESHOLD 200.0f     // velocity magnitude below this = candidate for sleep
+#define SLEEP_TIME_THRESHOLD     0.3f       // seconds below threshold before going to sleep
+//#define WAKE_VELOCITY_THRESHOLD  30.0f    // if a neighbor has velocity above this, wake up
+#define WAKE_VELOCITY_THRESHOLD SLEEP_VELOCITY_THRESHOLD
+
 // ── Ball structure ───────────────────────────────────────────────────────────
 struct Ball {
     Vector2 Position;
     Vector2 Velocity;
     Color   Color;
     bool    IsAlive;
+    bool    IsSleeping;
+    float   sleepTimer;   // time spent with velocity below threshold
 };
 
 static Ball balls[SPHERE_COUNT];
@@ -69,9 +77,10 @@ static Texture2D highlightTexture;
 static double physicsTime = 0;
 static double renderTime  = 0;
 static double frameTime   = 0;
+static int sleepingCount = 0;
 
 // ── Auto-restart timer ───────────────────────────────────────────────────────
-const float RestartInterval = 5.0f;
+const float RestartInterval = 8.0f;
 static float restartTimer = 0;
 
 // ── RNG (simple xorshift32 seeded with 42) ───────────────────────────────────
@@ -159,8 +168,8 @@ int main(void)
                 physicsTime, renderTime, frameTime);
         DrawText(buf, 10, sy + 2 * ls, 20, LIGHTGRAY);
 
-        sprintf(buf, "Restitution: %.2f  Friction: %.2f  Cols: %d",
-                Restitution, Friction, numColumns);
+        sprintf(buf, "Restitution: %.2f  Friction: %.2f  Cols: %d  Asleep: %d",
+                Restitution, Friction, numColumns, sleepingCount);
         DrawText(buf, 10, sy + 3 * ls, 20, LIGHTGRAY);
 
         float timeLeft = RestartInterval - restartTimer;
@@ -252,6 +261,8 @@ static void InitBalls(void)
             255
         };
         balls[i].IsAlive = true;
+        balls[i].IsSleeping = false;
+        balls[i].sleepTimer = 0.0f;
     }
 }
 
@@ -295,18 +306,25 @@ static void BuildGrid(void)
     }
 }
 
+// ── Helper: compute velocity squared magnitude ──────────────────────────────
+static inline float velMagSq(const Ball& b) {
+    return b.Velocity.x * b.Velocity.x + b.Velocity.y * b.Velocity.y;
+}
+
 // ── UpdatePhysics ────────────────────────────────────────────────────────────
 static void UpdatePhysics(float dt)
 {
     int substeps = 4;
     float subDt = dt / substeps;
+    float sleepVelSq = SLEEP_VELOCITY_THRESHOLD * SLEEP_VELOCITY_THRESHOLD;
+    float wakeVelSq  = WAKE_VELOCITY_THRESHOLD * WAKE_VELOCITY_THRESHOLD;
 
     for (int step = 0; step < substeps; step++)
     {
-        // Phase 1: Apply forces (skip dead balls)
+        // Phase 1: Apply forces (skip dead and sleeping balls)
         for (int i = 0; i < SphereCount; i++)
         {
-            if (!balls[i].IsAlive) continue;
+            if (!balls[i].IsAlive || balls[i].IsSleeping) continue;
 
             balls[i].Velocity.y += Gravity * subDt;
             float damp = 1.0f - 0.5f * subDt;
@@ -321,13 +339,29 @@ static void UpdatePhysics(float dt)
                 balls[i].IsAlive = false;
         }
 
-        // Phase 2: Build spatial grid (only alive balls)
-        BuildGrid();
-
-        // Phase 3: Wall/ground collision (only alive balls)
+        // Phase 2: Build spatial grid (only alive, non-sleeping balls)
+        // Sleeping balls are static obstacles — they still go in the grid so
+        // awake balls can collide with them, but they don't move.
+        memset(gridHeads, -1, sizeof(gridHeads));
         for (int i = 0; i < SphereCount; i++)
         {
             if (!balls[i].IsAlive) continue;
+
+            int col = (int)(balls[i].Position.x / CELL_SIZE);
+            int row = (int)(balls[i].Position.y / CELL_SIZE);
+            col = std::max(0, std::min(col, GRID_COLS - 1));
+            row = std::max(0, std::min(row, GRID_ROWS - 1));
+
+            int cell = row * GRID_COLS + col;
+            gridNext[i] = gridHeads[cell];
+            gridHeads[cell] = i;
+            gridCellIdx[i] = cell;
+        }
+
+        // Phase 3: Wall/ground collision (only alive, non-sleeping balls)
+        for (int i = 0; i < SphereCount; i++)
+        {
+            if (!balls[i].IsAlive || balls[i].IsSleeping) continue;
 
             if (balls[i].Position.y + SphereRadius > GroundY)
             {
@@ -340,9 +374,11 @@ static void UpdatePhysics(float dt)
         }
 
         // Phase 4: Sphere-sphere collision via spatial grid
+        // Only awake balls check for collisions. If a collision happens with a
+        // sleeping ball, the sleeping ball gets woken up.
         for (int i = 0; i < SphereCount; i++)
         {
-            if (!balls[i].IsAlive) continue;
+            if (!balls[i].IsAlive || balls[i].IsSleeping) continue;
 
             int cell = gridCellIdx[i];
             int row = cell / GRID_COLS;
@@ -352,6 +388,8 @@ static void UpdatePhysics(float dt)
             for (int j = gridHeads[cell]; j != -1; j = gridNext[j])
             {
                 if (j <= i) continue;
+                // Skip if both are sleeping (shouldn't happen since i is awake,
+                // but j could be sleeping — that's fine, we want to wake it)
                 ResolveCollision(i, j);
             }
 
@@ -371,6 +409,52 @@ static void UpdatePhysics(float dt)
                     if (j <= i) continue;
                     ResolveCollision(i, j);
                 }
+            }
+        }
+    }
+
+    // ── Sleep management (after all substeps) ──────────────────────────────
+    sleepingCount = 0;
+
+    for (int i = 0; i < SphereCount; i++)
+    {
+        if (!balls[i].IsAlive) continue;
+
+        float magSq = velMagSq(balls[i]);
+
+        if (balls[i].IsSleeping)
+        {
+            // Wake up if velocity exceeds threshold (e.g. from a collision)
+            if (magSq > wakeVelSq)
+            {
+                balls[i].IsSleeping = false;
+                balls[i].sleepTimer = 0.0f;
+            }
+            else
+            {
+                sleepingCount++;
+            }
+        }
+        else
+        {
+            // Track how long velocity has been below sleep threshold
+            if (magSq < sleepVelSq)
+            {
+                balls[i].sleepTimer += dt;
+                if (balls[i].sleepTimer >= SLEEP_TIME_THRESHOLD)
+                {
+                    // Go to sleep — zero out velocity to stop all jitter
+                    balls[i].IsSleeping = true;
+                    balls[i].Velocity.x = 0.0f;
+                    balls[i].Velocity.y = 0.0f;
+                    balls[i].sleepTimer = 0.0f;
+                    sleepingCount++;
+                }
+            }
+            else
+            {
+                // Reset timer if velocity spikes up
+                balls[i].sleepTimer = 0.0f;
             }
         }
     }
@@ -409,6 +493,25 @@ static void ResolveCollision(int i, int j)
             float impulse = -(1.0f + Restitution) * velAlongNormal * 0.5f;
             float impX = nx * impulse;
             float impY = ny * impulse;
+
+            // Only wake sleeping balls if the impulse is significant enough
+            // to actually matter (avoids jitter wake-sleep cycles)
+            float impulseMag = impulse * impulse;
+            bool significantImpulse = impulseMag > 4.0f;
+
+            if (significantImpulse)
+            {
+                if (balls[i].IsSleeping)
+                {
+                    balls[i].IsSleeping = false;
+                    balls[i].sleepTimer = 0.0f;
+                }
+                if (balls[j].IsSleeping)
+                {
+                    balls[j].IsSleeping = false;
+                    balls[j].sleepTimer = 0.0f;
+                }
+            }
 
             balls[i].Velocity.x -= impX;
             balls[i].Velocity.y -= impY;
