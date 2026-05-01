@@ -22,7 +22,7 @@ static inline float fast_rsqrt(float x) {
 // Use #define for compile-time constants that affect array sizes
 #define SCREEN_WIDTH  960
 #define SCREEN_HEIGHT 540
-#define SPHERE_COUNT  10000
+#define SPHERE_COUNT  5000
 #define SPHERE_RADIUS 6.0f
 #define MIN_DIST      (SPHERE_RADIUS * 2.0f)
 #define MIN_DIST_SQ   (MIN_DIST * MIN_DIST)
@@ -47,8 +47,8 @@ static float Friction = 0.0f;
 #define CELL_SIZE 24.0f
 
 // ── Sleep thresholds ─────────────────────────────────────────────────────────
-#define SLEEP_VELOCITY_THRESHOLD 200.0f     // velocity magnitude below this = candidate for sleep
-#define SLEEP_TIME_THRESHOLD     0.3f       // seconds below threshold before going to sleep
+#define SLEEP_VELOCITY_THRESHOLD 300.0f     // velocity magnitude below this = candidate for sleep
+#define SLEEP_TIME_THRESHOLD     1.0f       // seconds below threshold before going to sleep
 //#define WAKE_VELOCITY_THRESHOLD  30.0f    // if a neighbor has velocity above this, wake up
 #define WAKE_VELOCITY_THRESHOLD SLEEP_VELOCITY_THRESHOLD*2
 
@@ -82,7 +82,7 @@ static double frameTime   = 0;
 static int sleepingCount = 0;
 
 // ── Auto-restart timer ───────────────────────────────────────────────────────
-const float RestartInterval = 8.0f;
+const float RestartInterval = 25.0f;
 static float restartTimer = 0;
 
 // ── RNG (simple xorshift32 seeded with 42) ───────────────────────────────────
@@ -132,7 +132,10 @@ int main(void)
         if (dt > 0.033f) dt = 0.033f;
 
         if (IsKeyPressed(KEY_R))
+        {
+            restartTimer = 0.0f;
             InitBalls();
+        }
 
         // Auto-restart every RestartInterval seconds
         restartTimer += dt;
@@ -321,9 +324,13 @@ static void UpdatePhysics(float dt)
     float sleepVelSq = SLEEP_VELOCITY_THRESHOLD * SLEEP_VELOCITY_THRESHOLD;
     float wakeVelSq  = WAKE_VELOCITY_THRESHOLD * WAKE_VELOCITY_THRESHOLD;
 
+    // ── Phase 1: Integration substeps ──────────────────────────────────────
+    // Run multiple substeps for stability.
+    // Grid rebuild and collision detection happen once after all substeps.
+    // Track the highest Y position to know if any ball is on screen.
+    float maxY = -1e9f;
     for (int step = 0; step < substeps; step++)
     {
-        // Phase 1: Apply forces (skip dead and sleeping balls)
         for (int i = 0; i < SphereCount; i++)
         {
             if (!balls[i].IsAlive || balls[i].IsSleeping) continue;
@@ -336,118 +343,114 @@ static void UpdatePhysics(float dt)
             balls[i].Position.x += balls[i].Velocity.x * subDt;
             balls[i].Position.y += balls[i].Velocity.y * subDt;
 
-            // Mark balls that fall far below the ground as dead
+            if (balls[i].Position.y > maxY)
+                maxY = balls[i].Position.y;
+
             if (balls[i].Position.y > GroundY + ScreenHeight * 0.5f)
                 balls[i].IsAlive = false;
         }
+    }
 
-        // Phase 2: Build spatial grid (only alive balls)
-        // Also build a list of "crowded cells" — cells with 2+ balls.
-        // Phase 4 will only iterate these cells and their neighbors.
-        memset(gridHeads, -1, sizeof(gridHeads));
-        // Use a local count array to detect crowded cells
-        int cellCounts[GRID_COLS * GRID_ROWS];
-        memset(cellCounts, 0, sizeof(cellCounts));
-        for (int i = 0; i < SphereCount; i++)
+    // ── Phase 2: Build spatial grid (once per frame) ───────────────────────
+    memset(gridHeads, -1, sizeof(gridHeads));
+    int cellCounts[GRID_COLS * GRID_ROWS];
+    memset(cellCounts, 0, sizeof(cellCounts));
+    for (int i = 0; i < SphereCount; i++)
+    {
+        if (!balls[i].IsAlive) continue;
+
+        int col = (int)(balls[i].Position.x / CELL_SIZE);
+        int row = (int)(balls[i].Position.y / CELL_SIZE);
+        col = std::max(0, std::min(col, GRID_COLS - 1));
+        row = std::max(0, std::min(row, GRID_ROWS - 1));
+
+        int cell = row * GRID_COLS + col;
+        cellCounts[cell]++;
+        gridNext[i] = gridHeads[cell];
+        gridHeads[cell] = i;
+        gridCellIdx[i] = cell;
+    }
+    // Build crowded cells list
+    crowdedCount = 0;
+    for (int cell = 0; cell < GRID_COLS * GRID_ROWS; cell++)
+    {
+        if (cellCounts[cell] >= 2)
+            crowdedCells[crowdedCount++] = cell;
+    }
+
+    // ── Phase 3: Wall/ground collision (once per frame) ────────────────────
+    for (int i = 0; i < SphereCount; i++)
+    {
+        if (!balls[i].IsAlive || balls[i].IsSleeping) continue;
+
+        if (balls[i].Position.y + SphereRadius > GroundY)
         {
-            if (!balls[i].IsAlive) continue;
-
-            int col = (int)(balls[i].Position.x / CELL_SIZE);
-            int row = (int)(balls[i].Position.y / CELL_SIZE);
-            col = std::max(0, std::min(col, GRID_COLS - 1));
-            row = std::max(0, std::min(row, GRID_ROWS - 1));
-
-            int cell = row * GRID_COLS + col;
-            cellCounts[cell]++;
-            gridNext[i] = gridHeads[cell];
-            gridHeads[cell] = i;
-            gridCellIdx[i] = cell;
+            balls[i].Position.y = GroundY - SphereRadius;
+            balls[i].Velocity.y = -balls[i].Velocity.y * Restitution;
+            balls[i].Velocity.x *= (1.0f - Friction);
+            if (fabsf(balls[i].Velocity.y) < 10.0f)
+                balls[i].Velocity.y = 0;
         }
-        // Build crowded cells list from the counts
-        crowdedCount = 0;
-        for (int cell = 0; cell < GRID_COLS * GRID_ROWS; cell++)
-        {
-            if (cellCounts[cell] >= 2)
-                crowdedCells[crowdedCount++] = cell;
-        }
+    }
 
-        // Phase 3: Wall/ground collision (only alive, non-sleeping balls)
-        for (int i = 0; i < SphereCount; i++)
-        {
-            if (!balls[i].IsAlive || balls[i].IsSleeping) continue;
+    // ── Phase 4: Sphere-sphere collision (once per frame) ──────────────────
+    // If no ball is on screen yet (all above y=0), skip entirely.
+    // Balls above the screen are all falling at the same speed in a column
+    // and can't collide with anything meaningful.
+    if (crowdedCount > 0 && maxY >= 0)
+    {
+        static int visitedGen = 0;
+        static int visited[SPHERE_COUNT];
+        visitedGen++;
 
-            if (balls[i].Position.y + SphereRadius > GroundY)
+        for (int ci = 0; ci < crowdedCount; ci++)
+        {
+            int cell = crowdedCells[ci];
+            int row = cell / GRID_COLS;
+            int col = cell % GRID_COLS;
+
+            // Same cell — collide every pair
+            for (int i = gridHeads[cell]; i != -1; i = gridNext[i])
             {
-                balls[i].Position.y = GroundY - SphereRadius;
-                balls[i].Velocity.y = -balls[i].Velocity.y * Restitution;
-                balls[i].Velocity.x *= (1.0f - Friction);
-                if (fabsf(balls[i].Velocity.y) < 10.0f)
-                    balls[i].Velocity.y = 0;
+                if (!balls[i].IsAlive || balls[i].IsSleeping) continue;
+                visited[i] = visitedGen;
+
+                for (int j = gridNext[i]; j != -1; j = gridNext[j])
+                {
+                    if (!balls[j].IsAlive || balls[j].IsSleeping) continue;
+                    ResolveCollision(i, j);
+                }
             }
-        }
 
-        // Phase 4: Sphere-sphere collision via spatial grid
-        // Only iterate crowded cells and their neighbors.
-        // This avoids the O(n) scan over all 10000 balls.
-        if (crowdedCount > 0)
-        {
-            // Use a visited marker to avoid processing the same ball twice
-            // from different crowded cells. We use a simple generation counter.
-            static int visitedGen = 0;
-            static int visited[SPHERE_COUNT];
-            visitedGen++;
+            // 4 adjacent cells
+            int nc[] = { col + 1, col + 1, col, col - 1 };
+            int nr[] = { row, row + 1, row + 1, row + 1 };
 
-            for (int ci = 0; ci < crowdedCount; ci++)
+            for (int n = 0; n < 4; n++)
             {
-                int cell = crowdedCells[ci];
-                int row = cell / GRID_COLS;
-                int col = cell % GRID_COLS;
+                if (nc[n] < 0 || nc[n] >= GRID_COLS || nr[n] < 0 || nr[n] >= GRID_ROWS)
+                    continue;
 
-                // Check same cell — collide every pair
+                int neighborCell = nr[n] * GRID_COLS + nc[n];
+                if (gridHeads[neighborCell] == -1)
+                    continue;
+
                 for (int i = gridHeads[cell]; i != -1; i = gridNext[i])
                 {
                     if (!balls[i].IsAlive || balls[i].IsSleeping) continue;
-                    visited[i] = visitedGen;
 
-                    for (int j = gridNext[i]; j != -1; j = gridNext[j])
+                    for (int j = gridHeads[neighborCell]; j != -1; j = gridNext[j])
                     {
                         if (!balls[j].IsAlive || balls[j].IsSleeping) continue;
+                        if (visited[j] == visitedGen) continue;
                         ResolveCollision(i, j);
-                    }
-                }
-
-                // Check 4 adjacent cells
-                int nc[] = { col + 1, col + 1, col, col - 1 };
-                int nr[] = { row, row + 1, row + 1, row + 1 };
-
-                for (int n = 0; n < 4; n++)
-                {
-                    if (nc[n] < 0 || nc[n] >= GRID_COLS || nr[n] < 0 || nr[n] >= GRID_ROWS)
-                        continue;
-
-                    int neighborCell = nr[n] * GRID_COLS + nc[n];
-                    if (gridHeads[neighborCell] == -1)
-                        continue;
-
-                    // Collide each ball in the crowded cell with each ball
-                    // in the neighbor cell
-                    for (int i = gridHeads[cell]; i != -1; i = gridNext[i])
-                    {
-                        if (!balls[i].IsAlive || balls[i].IsSleeping) continue;
-
-                        for (int j = gridHeads[neighborCell]; j != -1; j = gridNext[j])
-                        {
-                            if (!balls[j].IsAlive || balls[j].IsSleeping) continue;
-                            if (visited[j] == visitedGen) continue; // already processed
-                            ResolveCollision(i, j);
-                        }
                     }
                 }
             }
         }
     }
 
-    // ── Sleep management (after all substeps) ──────────────────────────────
+    // ── Sleep management ───────────────────────────────────────────────────
     sleepingCount = 0;
 
     for (int i = 0; i < SphereCount; i++)
@@ -458,7 +461,6 @@ static void UpdatePhysics(float dt)
 
         if (balls[i].IsSleeping)
         {
-            // Wake up if velocity exceeds threshold (e.g. from a collision)
             if (magSq > wakeVelSq)
             {
                 balls[i].IsSleeping = false;
@@ -471,13 +473,11 @@ static void UpdatePhysics(float dt)
         }
         else
         {
-            // Track how long velocity has been below sleep threshold
             if (magSq < sleepVelSq)
             {
                 balls[i].sleepTimer += dt;
                 if (balls[i].sleepTimer >= SLEEP_TIME_THRESHOLD)
                 {
-                    // Go to sleep — zero out velocity to stop all jitter
                     balls[i].IsSleeping = true;
                     balls[i].Velocity.x = 0.0f;
                     balls[i].Velocity.y = 0.0f;
@@ -487,7 +487,6 @@ static void UpdatePhysics(float dt)
             }
             else
             {
-                // Reset timer if velocity spikes up
                 balls[i].sleepTimer = 0.0f;
             }
         }
@@ -499,6 +498,15 @@ static void ResolveCollision(int i, int j)
 {
     float dx = balls[j].Position.x - balls[i].Position.x;
     float dy = balls[j].Position.y - balls[i].Position.y;
+
+    // Quick bounding-box check: if balls are more than MIN_DIST apart
+    // in either axis, they can't possibly overlap. This is critical when
+    // hundreds of balls share the same grid cell (e.g. falling column).
+    float adx = dx < 0 ? -dx : dx;
+    float ady = dy < 0 ? -dy : dy;
+    if (adx >= MIN_DIST || ady >= MIN_DIST)
+        return;
+
     float distSq = dx * dx + dy * dy;
 
     if (distSq < MIN_DIST_SQ && distSq > 0.0001f)
