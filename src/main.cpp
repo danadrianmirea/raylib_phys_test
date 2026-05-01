@@ -82,7 +82,8 @@ static double frameTime   = 0;
 static int sleepingCount = 0;
 
 // ── Auto-restart timer ───────────────────────────────────────────────────────
-const float RestartInterval = 25.0f;
+const bool AutoRestart = false;
+const float RestartInterval = 10.0f;
 static float restartTimer = 0;
 
 // ── RNG (simple xorshift32 seeded with 42) ───────────────────────────────────
@@ -114,6 +115,12 @@ static void BuildGrid(void);
 static void UpdatePhysics(float dt);
 static void ResolveCollision(int i, int j);
 
+void Restart()
+{
+    restartTimer = 0;
+    InitBalls();
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 int main(void)
 {
@@ -133,18 +140,22 @@ int main(void)
 
         if (IsKeyPressed(KEY_R))
         {
-            restartTimer = 0.0f;
-            InitBalls();
+            Restart();
         }
 
-        // Auto-restart every RestartInterval seconds
+        // If AutoRestart is true, Auto-restart every RestartInterval seconds
         restartTimer += dt;
-        if (restartTimer >= RestartInterval)
+        if (restartTimer >= RestartInterval && AutoRestart == true)
         {
-            restartTimer = 0;
-            InitBalls();
+            Restart();
         }
 
+        // Restart when all balls are asleep
+        if(sleepingCount == SPHERE_COUNT)
+        {
+            Restart();
+        }
+        
         // Physics
         double physStart = GetTime();
         UpdatePhysics(dt);
@@ -178,7 +189,14 @@ int main(void)
         DrawText(buf, 10, sy + 3 * ls, 20, LIGHTGRAY);
 
         float timeLeft = RestartInterval - restartTimer;
-        sprintf(buf, "Press R to reset  (auto: %.1fs)", timeLeft);
+        if(AutoRestart)
+        {
+            sprintf(buf, "Press R to reset  (auto: %.1fs)", timeLeft);
+        }
+        else
+        {
+            sprintf(buf, "Press R to reset");
+        }
         DrawText(buf, 10, sy + 4 * ls, 20, LIGHTGRAY);
 
         EndDrawing();
