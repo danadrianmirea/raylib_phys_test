@@ -27,8 +27,8 @@ static inline float fast_rsqrt(float x) {
 #define MIN_DIST      (SPHERE_RADIUS * 2.0f)
 #define MIN_DIST_SQ   (MIN_DIST * MIN_DIST)
 
-const int ScreenWidth  = SCREEN_WIDTH;
-const int ScreenHeight = SCREEN_HEIGHT;
+static int ScreenWidth  = SCREEN_WIDTH;
+static int ScreenHeight = SCREEN_HEIGHT;
 const int SphereCount  = SPHERE_COUNT;
 const float SphereRadius = SPHERE_RADIUS;
 
@@ -129,16 +129,26 @@ static void BuildGrid(void);
 static void UpdatePhysics(float dt);
 static void ResolveCollision(int i, int j);
 
+void InitCamera()
+{
+    camera.target = Vector2{ ScreenWidth * 0.5f, ScreenHeight * 0.5f };
+    camera.offset = Vector2{ ScreenWidth * 0.5f, ScreenHeight * 0.5f };
+    camera.rotation = 0.0f;
+    camera.zoom = 0.7f;
+}
+
 void Restart()
 {
     restartTimer = 0;
     restartSleepTimer = 0.0f;
     InitBalls();
+    InitCamera();
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 int main(void)
 {
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(ScreenWidth, ScreenHeight, "Raylib C++ 2D Physics Simulation");
     SetTargetFPS(60);
 
@@ -146,11 +156,7 @@ int main(void)
     memset(gridHeads, -1, sizeof(gridHeads));
 
     // Initialize camera centered on the spawn area
-    camera.target = Vector2{ ScreenWidth * 0.5f, ScreenHeight * 0.5f };
-    camera.offset = Vector2{ ScreenWidth * 0.5f, ScreenHeight * 0.5f };
-    camera.rotation = 0.0f;
-    camera.zoom = 0.7f;
-
+    InitCamera();
     InitTextures();
     InitBalls();
 
@@ -167,6 +173,19 @@ int main(void)
         if (IsKeyPressed(KEY_R))
         {
             Restart();
+        }
+
+        // Handle window resize: just update the viewport size and camera offset
+        // so the same world point stays centered. Zoom is NOT changed — we just
+        // get more (or fewer) pixels to render into.
+        if (IsWindowResized())
+        {
+            ScreenWidth  = GetScreenWidth();
+            ScreenHeight = GetScreenHeight();
+            
+            // Keep camera centered on the same world point
+            camera.offset.x = ScreenWidth * 0.5f;
+            camera.offset.y = ScreenHeight * 0.5f;
         }
 
         // ── Camera controls ────────────────────────────────────────────────
@@ -401,24 +420,19 @@ static void DrawSpheres(void)
     int maxCol = (int)(bottomRight.x / CELL_SIZE);
     int minRow = (int)(topLeft.y / CELL_SIZE);
     int maxRow = (int)(bottomRight.y / CELL_SIZE);
-
-    // Debug: print when near the boundary where things might disappear
-    static int debugFrame = 0;
-    debugFrame++;
-    if (debugFrame % 60 == 0)
-    {
-        printf("cam=(%.1f,%.1f) zoom=%.2f topLeft=(%.1f,%.1f) botRight=(%.1f,%.1f) "
-               "rows=[%d..%d] cols=[%d..%d] maxY=%.1f\n",
-               camera.target.x, camera.target.y, camera.zoom,
-               topLeft.x, topLeft.y, bottomRight.x, bottomRight.y,
-               minRow, maxRow, minCol, maxCol, maxY);
-    }
     
-    // Clamp to grid bounds
+    // Clamp to grid bounds.
+    // Note: balls at negative Y positions are clamped to row 0 by BuildGrid,
+    // so when the viewport is above the grid (negative Y), we must still
+    // include row 0 in the iteration range.
     if (minCol < 0) minCol = 0;
     if (maxCol >= GRID_COLS) maxCol = GRID_COLS - 1;
+    if (minCol > maxCol) { minCol = 0; maxCol = -1; } // entire viewport left/right of grid
+    
     if (minRow < 0) minRow = 0;
     if (maxRow >= GRID_ROWS) maxRow = GRID_ROWS - 1;
+    if (maxRow < 0) maxRow = 0;  // viewport above grid: still need row 0 (balls clamped there)
+    if (minRow > maxRow) { minRow = 0; maxRow = -1; } // entire viewport below grid
 
     // Pre-compute texture source rect (full texture)
     Rectangle srcRect = { 0, 0, (float)circleTexture.width, (float)circleTexture.height };
