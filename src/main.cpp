@@ -50,7 +50,7 @@ static float Friction = 0.0f;
 #define SLEEP_VELOCITY_THRESHOLD 200.0f     // velocity magnitude below this = candidate for sleep
 #define SLEEP_TIME_THRESHOLD     0.3f       // seconds below threshold before going to sleep
 //#define WAKE_VELOCITY_THRESHOLD  30.0f    // if a neighbor has velocity above this, wake up
-#define WAKE_VELOCITY_THRESHOLD SLEEP_VELOCITY_THRESHOLD
+#define WAKE_VELOCITY_THRESHOLD SLEEP_VELOCITY_THRESHOLD*2
 
 // ── Ball structure ───────────────────────────────────────────────────────────
 struct Ball {
@@ -68,6 +68,8 @@ static Ball balls[SPHERE_COUNT];
 static int gridHeads[GRID_COLS * GRID_ROWS]; // -1 = empty
 static int gridNext[SPHERE_COUNT];           // linked list per cell
 static int gridCellIdx[SPHERE_COUNT];        // which cell each ball is in
+static int crowdedCells[GRID_COLS * GRID_ROWS]; // list of cells with 2+ balls
+static int crowdedCount = 0;                     // number of crowded cells
 
 // ── Pre-rendered circle textures ─────────────────────────────────────────────
 static Texture2D circleTexture;
@@ -339,10 +341,13 @@ static void UpdatePhysics(float dt)
                 balls[i].IsAlive = false;
         }
 
-        // Phase 2: Build spatial grid (only alive, non-sleeping balls)
-        // Sleeping balls are static obstacles — they still go in the grid so
-        // awake balls can collide with them, but they don't move.
+        // Phase 2: Build spatial grid (only alive balls)
+        // Also build a list of "crowded cells" — cells with 2+ balls.
+        // Phase 4 will only iterate these cells and their neighbors.
         memset(gridHeads, -1, sizeof(gridHeads));
+        // Use a local count array to detect crowded cells
+        int cellCounts[GRID_COLS * GRID_ROWS];
+        memset(cellCounts, 0, sizeof(cellCounts));
         for (int i = 0; i < SphereCount; i++)
         {
             if (!balls[i].IsAlive) continue;
@@ -353,9 +358,17 @@ static void UpdatePhysics(float dt)
             row = std::max(0, std::min(row, GRID_ROWS - 1));
 
             int cell = row * GRID_COLS + col;
+            cellCounts[cell]++;
             gridNext[i] = gridHeads[cell];
             gridHeads[cell] = i;
             gridCellIdx[i] = cell;
+        }
+        // Build crowded cells list from the counts
+        crowdedCount = 0;
+        for (int cell = 0; cell < GRID_COLS * GRID_ROWS; cell++)
+        {
+            if (cellCounts[cell] >= 2)
+                crowdedCells[crowdedCount++] = cell;
         }
 
         // Phase 3: Wall/ground collision (only alive, non-sleeping balls)
@@ -374,40 +387,61 @@ static void UpdatePhysics(float dt)
         }
 
         // Phase 4: Sphere-sphere collision via spatial grid
-        // Only awake balls check for collisions. If a collision happens with a
-        // sleeping ball, the sleeping ball gets woken up.
-        for (int i = 0; i < SphereCount; i++)
+        // Only iterate crowded cells and their neighbors.
+        // This avoids the O(n) scan over all 10000 balls.
+        if (crowdedCount > 0)
         {
-            if (!balls[i].IsAlive || balls[i].IsSleeping) continue;
+            // Use a visited marker to avoid processing the same ball twice
+            // from different crowded cells. We use a simple generation counter.
+            static int visitedGen = 0;
+            static int visited[SPHERE_COUNT];
+            visitedGen++;
 
-            int cell = gridCellIdx[i];
-            int row = cell / GRID_COLS;
-            int col = cell % GRID_COLS;
-
-            // Check same cell (only higher indices to avoid double-checks)
-            for (int j = gridHeads[cell]; j != -1; j = gridNext[j])
+            for (int ci = 0; ci < crowdedCount; ci++)
             {
-                if (j <= i) continue;
-                // Skip if both are sleeping (shouldn't happen since i is awake,
-                // but j could be sleeping — that's fine, we want to wake it)
-                ResolveCollision(i, j);
-            }
+                int cell = crowdedCells[ci];
+                int row = cell / GRID_COLS;
+                int col = cell % GRID_COLS;
 
-            // Check 4 adjacent cells (right, bottom-right, bottom, bottom-left)
-            int neighborCols[] = { col + 1, col + 1, col, col - 1 };
-            int neighborRows[] = { row, row + 1, row + 1, row + 1 };
-
-            for (int n = 0; n < 4; n++)
-            {
-                int nc = neighborCols[n];
-                int nr = neighborRows[n];
-                if (nc < 0 || nc >= GRID_COLS || nr < 0 || nr >= GRID_ROWS) continue;
-
-                int neighborCell = nr * GRID_COLS + nc;
-                for (int j = gridHeads[neighborCell]; j != -1; j = gridNext[j])
+                // Check same cell — collide every pair
+                for (int i = gridHeads[cell]; i != -1; i = gridNext[i])
                 {
-                    if (j <= i) continue;
-                    ResolveCollision(i, j);
+                    if (!balls[i].IsAlive || balls[i].IsSleeping) continue;
+                    visited[i] = visitedGen;
+
+                    for (int j = gridNext[i]; j != -1; j = gridNext[j])
+                    {
+                        if (!balls[j].IsAlive || balls[j].IsSleeping) continue;
+                        ResolveCollision(i, j);
+                    }
+                }
+
+                // Check 4 adjacent cells
+                int nc[] = { col + 1, col + 1, col, col - 1 };
+                int nr[] = { row, row + 1, row + 1, row + 1 };
+
+                for (int n = 0; n < 4; n++)
+                {
+                    if (nc[n] < 0 || nc[n] >= GRID_COLS || nr[n] < 0 || nr[n] >= GRID_ROWS)
+                        continue;
+
+                    int neighborCell = nr[n] * GRID_COLS + nc[n];
+                    if (gridHeads[neighborCell] == -1)
+                        continue;
+
+                    // Collide each ball in the crowded cell with each ball
+                    // in the neighbor cell
+                    for (int i = gridHeads[cell]; i != -1; i = gridNext[i])
+                    {
+                        if (!balls[i].IsAlive || balls[i].IsSleeping) continue;
+
+                        for (int j = gridHeads[neighborCell]; j != -1; j = gridNext[j])
+                        {
+                            if (!balls[j].IsAlive || balls[j].IsSleeping) continue;
+                            if (visited[j] == visitedGen) continue; // already processed
+                            ResolveCollision(i, j);
+                        }
+                    }
                 }
             }
         }
