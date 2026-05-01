@@ -286,7 +286,7 @@ int main(void)
         BeginMode2D(camera);
 
         constexpr int groundScale = 100;
-        DrawRectangle(-ScreenWidth*groundScale/2, (int)GroundY, ScreenWidth*groundScale, 5000, SKYBLUE);
+        DrawRectangle(-ScreenWidth*groundScale/2, (int)GroundY, ScreenWidth*groundScale, 5000, BROWN);
 
         double renderStart = GetTime();
         DrawSpheres();
@@ -300,7 +300,7 @@ int main(void)
         DrawFPS(10, sy);
         char buf[256];
 
-        sprintf(buf, "Spheres: %d", SphereCount);
+        sprintf(buf, "Balls: %d", SphereCount);
         DrawText(buf, 10, sy + ls, 20, LIGHTGRAY);
 
         sprintf(buf, "Physics: %.2fms  Draw: %.2fms  Frame: %.2fms",
