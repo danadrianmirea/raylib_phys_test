@@ -330,7 +330,7 @@ static void DrawSpheres(void)
             int cell = row * GRID_COLS + col;
             for (int i = gridHeads[cell]; i != -1; i = gridNext[i])
             {
-                if (!balls[i].IsAlive) continue;
+                //if (!balls[i].IsAlive) continue;
 
                 Vector2 pos = balls[i].Position;
 
