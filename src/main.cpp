@@ -386,8 +386,10 @@ static void InitBalls(void)
 {
     RandomizeParams();
 
+    // Spawn area is always based on the initial screen size, not the current
+    // runtime size (which may change due to window maximize/restore).
     float spacingX = SphereRadius * SphereSpacingX;
-    float startX = ScreenWidth / 2.0f - (numColumns - 1) * spacingX / 2.0f;
+    float startX = (float)SCREEN_WIDTH / 2.0f - (numColumns - 1) * spacingX / 2.0f;
     float spacingY = SphereRadius * SphereSpacingY;
 
     for (int i = 0; i < SphereCount; i++)
