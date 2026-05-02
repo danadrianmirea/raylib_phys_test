@@ -1,28 +1,29 @@
-# Raylib Game Template
+# raylib_phys_test
 
-A modern, cross-platform game template built with raylib, supporting both desktop and web builds. This template serves as a foundation for creating games that can be deployed to multiple platforms, including itch.io.
+A high-performance 2D physics simulation built with raylib and C++, featuring 5,000+ colliding spheres with spatial grid optimization, sleep management, and a pan/zoom camera.
 
 ## Features
 
-- **Cross-Platform Support**: Build for desktop and web platforms
-- **Responsive Design**: Dynamic resizing support for desktop, web, and mobile web
-- **Render to Texture**: Advanced rendering approach for consistent visuals across platforms
-- **Automated Builds**: Automatic zip generation for easy itch.io deployment
-- **CMake Integration**: Modern build system for desktop platforms
-- **Emscripten Support**: Web builds via Emscripten
+- **5,000 Spheres**: Real-time collision detection and response for thousands of spheres
+- **Spatial Grid Optimization**: Efficient broad-phase collision culling using a fixed-size grid (43×25 cells)
+- **Sleep System**: Balls that settle below a velocity threshold are put to sleep, saving CPU cycles
+- **Sleep-Based Auto-Restart**: When all balls are asleep, the simulation auto-restarts after a configurable delay
+- **Pan & Zoom Camera**: WASD/Arrow keys or mouse drag to pan, mouse wheel to zoom (with zoom-to-cursor)
+- **Substep Physics**: 4 substeps per frame for stable collision resolution
+- **Fast Inverse Square Root**: Uses the classic Quake III `fast_rsqrt` approximation for performance on WASM
+- **Pre-rendered Textures**: Circles are rendered via textured quads for efficient batching
+- **Resizable Window**: Dynamic viewport resizing with camera offset adjustment
+- **Desktop & Web Builds**: CMake for desktop, Emscripten for web
 
-## Building the Project
+## Building
 
 ### Desktop Build (CMake)
 
-1. Create a build directory:
+Requires raylib source at `C:/raylib/raylib` (configurable in CMakeLists.txt).
+
 ```bash
 mkdir build
 cd build
-```
-
-2. Configure and build:
-```bash
 cmake ..
 cmake --build . --config Release
 ```
@@ -31,7 +32,6 @@ The executable will be created in the `build` directory.
 
 ### Web Build (Emscripten)
 
-To build for web platforms, simply run:
 ```bash
 ./build_web.sh
 ```
@@ -39,46 +39,50 @@ To build for web platforms, simply run:
 This will:
 - Build the project using Emscripten
 - Generate a web-compatible build
-- Create a `web-build.zip` file ready for itch.io deployment
+- Create a `web-build.zip` file ready for deployment
+
+## Controls
+
+| Key / Input | Action |
+|---|---|
+| WASD / Arrow Keys | Pan camera |
+| Mouse Drag (Left Button) | Pan camera |
+| Mouse Wheel | Zoom in/out (towards cursor) |
+| R | Reset simulation |
+| C | Reset camera to default position |
 
 ## Project Structure
 
-- `src/`: Source code directory
-- `lib/`: Library dependencies
-- `Font/`: Font assets
-- `build/`: Desktop build output
-- `web-build/`: Web build output
-- `CMakeLists.txt`: CMake build configuration
-- `build_web.sh`: Web build script
-- `custom_shell.html`: Custom HTML shell for web builds
-
-## Deployment
-
-### itch.io Deployment
-
-The build system automatically generates zip files:
-- Desktop builds: Located in the `build` directory
-- Web builds: `web-build.zip` is created after running `build_web.sh`
-
-These zip files can be directly uploaded to itch.io for distribution.
+- `src/main.cpp` — Single-file implementation (physics, rendering, input, UI)
+- `data/` — Assets (font, sound effects)
+- `lib/` — Runtime DLLs for local execution
+- `CMakeLists.txt` — CMake build configuration
+- `build_web.sh` — Web build script
+- `custom_shell.html` — Custom HTML shell for web builds
 
 ## Technical Details
 
-### Render to Texture Approach
+### Physics Pipeline
 
-The template uses a render-to-texture approach to ensure:
-- Consistent visuals across different screen sizes
-- Proper scaling on mobile devices
-- Smooth resizing on desktop platforms
+1. **Integration** (4 substeps): Apply gravity, velocity damping, and position update
+2. **Spatial Grid Build**: Assign each ball to a grid cell; identify crowded cells (2+ balls)
+3. **Wall Collision**: Ground collision with restitution and friction
+4. **Sphere-Sphere Collision**: For each crowded cell, check all pairs within the cell and 4 adjacent cells
+5. **Sleep Management**: Balls below velocity threshold for 1 second are marked as sleeping
 
-### Dynamic Resizing
+### Collision Resolution
 
-The game automatically handles:
-- Window resizing on desktop
-- Browser window resizing
-- Mobile device orientation changes
-- Different screen resolutions
+- Elastic collision with configurable restitution (0.1–0.9) and friction (0–0.5)
+- Fast inverse square root for distance computation
+- Axis-aligned bounding box pre-check to skip distant pairs within the same cell
+- Impulse-based wake-up: only wakes sleeping balls if the collision impulse is significant
+
+### Rendering
+
+- Pre-rendered circle textures with bilinear filtering
+- Camera-aware frustum culling using the spatial grid
+- Screen-space HUD showing FPS, physics/render timing, and ball count
 
 ## License
 
-This project is licensed under the terms specified in the `LICENSE.txt` file."# raylib_phys_test" 
+This project is licensed under the terms specified in the `LICENSE.txt` file.
