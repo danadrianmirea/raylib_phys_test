@@ -22,7 +22,7 @@ static inline float fast_rsqrt(float x) {
 // Use #define for compile-time constants that affect array sizes
 #define SCREEN_WIDTH  960
 #define SCREEN_HEIGHT 540
-#define SPHERE_COUNT  5000
+#define SPHERE_COUNT  3000
 #define SPHERE_RADIUS 6.0f
 #define MIN_DIST      (SPHERE_RADIUS * 2.0f)
 #define MIN_DIST_SQ   (MIN_DIST * MIN_DIST)
