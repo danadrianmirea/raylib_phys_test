@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <algorithm>
 
-// ── Fast approximate rsqrt (for WASM where sqrtf is slow) ────────────────────
 // Uses the classic Quake III fast inverse square root with one Newton iteration
 static inline float fast_rsqrt(float x) {
     float x2 = x * 0.5f;
@@ -18,7 +17,6 @@ static inline float fast_rsqrt(float x) {
     return y;
 }
 
-// ── Constants ────────────────────────────────────────────────────────────────
 // Use #define for compile-time constants that affect array sizes
 #define SCREEN_WIDTH  960
 #define SCREEN_HEIGHT 540
@@ -46,13 +44,11 @@ static float Friction = 0.0f;
 #define GRID_ROWS 25
 #define CELL_SIZE 24.0f
 
-// ── Sleep thresholds ─────────────────────────────────────────────────────────
 #define SLEEP_VELOCITY_THRESHOLD 300.0f     // velocity magnitude below this = candidate for sleep
 #define SLEEP_TIME_THRESHOLD     1.0f       // seconds below threshold before going to sleep
 //#define WAKE_VELOCITY_THRESHOLD  30.0f    // if a neighbor has velocity above this, wake up
 #define WAKE_VELOCITY_THRESHOLD SLEEP_VELOCITY_THRESHOLD*2
 
-// ── Ball structure ───────────────────────────────────────────────────────────
 struct Ball {
     Vector2 Position;
     Vector2 Velocity;
@@ -64,43 +60,35 @@ struct Ball {
 
 static Ball balls[SPHERE_COUNT];
 
-// ── Spatial grid (pre-allocated arrays, no allocations) ──────────────────────
 static int gridHeads[GRID_COLS * GRID_ROWS]; // -1 = empty
 static int gridNext[SPHERE_COUNT];           // linked list per cell
 static int gridCellIdx[SPHERE_COUNT];        // which cell each ball is in
 static int crowdedCells[GRID_COLS * GRID_ROWS]; // list of cells with 2+ balls
 static int crowdedCount = 0;                     // number of crowded cells
 
-// ── Pre-rendered circle textures ─────────────────────────────────────────────
 static Texture2D circleTexture;
 static Texture2D highlightTexture;
 
-// ── Camera ───────────────────────────────────────────────────────────────────
 static Camera2D camera = { 0 };
 
-// ── Pan limits (world-space) ─────────────────────────────────────────────────
 static float panLimitLeft   = -ScreenWidth * 2.0f;
 static float panLimitRight  =  ScreenWidth * 2.0f;
 static float panLimitTop    = -ScreenHeight;
 static float panLimitBottom =  ScreenHeight;
 
-// ── Performance tracking ─────────────────────────────────────────────────────
 static double physicsTime = 0;
 static double renderTime  = 0;
 static double frameTime   = 0;
 static int sleepingCount = 0;
 static float maxY = -1e9f; // highest Y position of any ball (used by renderer for early-out)
 
-// ── Auto-restart timers ──────────────────────────────────────────────────────
 const bool AutoRestart = false;
 const float RestartInterval = 10.0f;
 static float restartTimer = 0;
 
-// ── Sleep-based restart ──────────────────────────────────────────────────────
 const float RestartIntervalSleep = 2.0f;
 static float restartSleepTimer = 0.0f;
 
-// ── RNG (simple xorshift32 seeded with 42) ───────────────────────────────────
 static unsigned int rngState = 42;
 
 static unsigned int xorshift32() {
@@ -120,7 +108,6 @@ static int randInt(int min, int max) {
     return min + (int)(randFloat() * (max - min + 1));
 }
 
-// ── Forward declarations ─────────────────────────────────────────────────────
 static void InitTextures(void);
 static void InitBalls(void);
 static void RandomizeParams(void);
@@ -145,7 +132,6 @@ void Restart()
     //InitCamera();
 }
 
-// ── Main ─────────────────────────────────────────────────────────────────────
 int main(void)
 {
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
@@ -192,7 +178,6 @@ int main(void)
             camera.offset.y = ScreenHeight * 0.5f;
         }
 
-        // ── Camera controls ────────────────────────────────────────────────
         // WASD / Arrow keys panning
         float panSpeed = 300.0f / camera.zoom;
         if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP))
@@ -331,7 +316,6 @@ int main(void)
     return 0;
 }
 
-// ── InitTextures ─────────────────────────────────────────────────────────────
 static void InitTextures(void)
 {
     int texSize = (int)(SphereRadius * 4);
@@ -373,7 +357,6 @@ static void InitTextures(void)
     UnloadImage(highlightImg);
 }
 
-// ── RandomizeParams ──────────────────────────────────────────────────────────
 static void RandomizeParams(void)
 {
     numColumns = randInt(10, 30);
@@ -381,7 +364,6 @@ static void RandomizeParams(void)
     Friction = randFloat() * 0.5f;
 }
 
-// ── InitBalls ────────────────────────────────────────────────────────────────
 static void InitBalls(void)
 {
     RandomizeParams();
@@ -414,7 +396,6 @@ static void InitBalls(void)
     }
 }
 
-// ── DrawSpheres ──────────────────────────────────────────────────────────────
 static void DrawSpheres(void)
 {
     // Use the spatial grid to only iterate balls in cells that overlap the
@@ -471,7 +452,6 @@ static void DrawSpheres(void)
     }
 }
 
-// ── BuildGrid ────────────────────────────────────────────────────────────────
 static void BuildGrid(void)
 {
     memset(gridHeads, -1, sizeof(gridHeads));
@@ -493,12 +473,10 @@ static void BuildGrid(void)
     }
 }
 
-// ── Helper: compute velocity squared magnitude ──────────────────────────────
 static inline float velMagSq(const Ball& b) {
     return b.Velocity.x * b.Velocity.x + b.Velocity.y * b.Velocity.y;
 }
 
-// ── UpdatePhysics ────────────────────────────────────────────────────────────
 static void UpdatePhysics(float dt)
 {
     int substeps = 4;
@@ -506,7 +484,6 @@ static void UpdatePhysics(float dt)
     float sleepVelSq = SLEEP_VELOCITY_THRESHOLD * SLEEP_VELOCITY_THRESHOLD;
     float wakeVelSq  = WAKE_VELOCITY_THRESHOLD * WAKE_VELOCITY_THRESHOLD;
 
-    // ── Phase 1: Integration substeps ──────────────────────────────────────
     // Run multiple substeps for stability.
     // Grid rebuild and collision detection happen once after all substeps.
     // Track the highest Y position to know if any ball is on screen.
@@ -540,7 +517,6 @@ static void UpdatePhysics(float dt)
             maxY = balls[i].Position.y;
     }
 
-    // ── Phase 2: Build spatial grid (once per frame) ───────────────────────
     memset(gridHeads, -1, sizeof(gridHeads));
     int cellCounts[GRID_COLS * GRID_ROWS];
     memset(cellCounts, 0, sizeof(cellCounts));
@@ -567,7 +543,6 @@ static void UpdatePhysics(float dt)
             crowdedCells[crowdedCount++] = cell;
     }
 
-    // ── Phase 3: Wall/ground collision (once per frame) ────────────────────
     for (int i = 0; i < SphereCount; i++)
     {
         if (!balls[i].IsAlive || balls[i].IsSleeping) continue;
@@ -582,7 +557,6 @@ static void UpdatePhysics(float dt)
         }
     }
 
-    // ── Phase 4: Sphere-sphere collision (once per frame) ──────────────────
     // If no ball is on screen yet (all above y=0), skip entirely.
     // Balls above the screen are all falling at the same speed in a column
     // and can't collide with anything meaningful.
@@ -639,7 +613,6 @@ static void UpdatePhysics(float dt)
         }
     }
 
-    // ── Sleep management ───────────────────────────────────────────────────
     sleepingCount = 0;
 
     for (int i = 0; i < SphereCount; i++)
@@ -682,7 +655,6 @@ static void UpdatePhysics(float dt)
     }
 }
 
-// ── ResolveCollision ─────────────────────────────────────────────────────────
 static void ResolveCollision(int i, int j)
 {
     float dx = balls[j].Position.x - balls[i].Position.x;
